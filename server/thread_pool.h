@@ -1,10 +1,13 @@
 #ifndef SERVER_THREADPOOL_H
 #define SERVER_THREADPOOL_H
+
+#include <stdbool.h>
 #include <pthread.h>
 
 int allocate_pool(int thread_num);
 int finish_pool();
 int push_task();
+bool tasks_ready();
 
 struct thread_pool;
 

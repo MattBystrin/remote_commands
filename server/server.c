@@ -25,7 +25,7 @@ int main(int argc, char *argv[])
 	};
 	sigaction(SIGINT, &disp, NULL);
 
-	net_init("127.0.0.1", 60000, 2);
+	net_init("127.0.0.1", 60000, 0);
 
 	while (running) {
 		net_event_loop();

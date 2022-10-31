@@ -12,9 +12,9 @@ struct thread_pool {
 	int num;
 	pthread_mutex_t mtx;
 	pthread_cond_t condv;
-	/* Must be changed under mutex */
-	bool running;
+	bool running; /* Must be changed under mutex */
 	struct node *queue;
+	int pending; /* Working tasks */
 };
 
 static struct thread_pool pool = {
@@ -22,7 +22,8 @@ static struct thread_pool pool = {
 	.num = 0,
 	.mtx = 0,
 	.condv = 0,
-	.queue = NULL
+	.queue = NULL,
+	.pending = 0
 };
 
 static int availtasks = 0;
@@ -33,18 +34,18 @@ void inside_func(void *arg)
 	printf("Getted arg %d\n", *casted);
 }
 
-static int intarg = 7;
-
-task_t example_task = {
-	.function = inside_func,
-	.args = &intarg,
-};
+int tasks_amount(struct node *head)
+{
+	int i = 0;
+	for (struct node *next = head->next; next != head; next = next->next, i++);
+	return i;
+}
 
 void *work_func(void *arg)
 {
 	while(1) {
 		pthread_mutex_lock(&pool.mtx);
-		/* */
+
 		while(pool.running == true && queue_empty(pool.queue))
 			pthread_cond_wait(&pool.condv, &pool.mtx);
 
@@ -55,8 +56,12 @@ void *work_func(void *arg)
 		/* Critical section */
 		task_t task = queue_pop(pool.queue);
 		pthread_mutex_unlock(&pool.mtx);
-		/* Non-critial section */
+
 		exec_task(task);
+
+		pthread_mutex_lock(&pool.mtx);
+		pool.pending--; /* Reset stricly after the task is done */
+		pthread_mutex_unlock(&pool.mtx);
 	}
 }
 
@@ -64,9 +69,19 @@ int push_task(task_t task)
 {
 	pthread_mutex_lock(&pool.mtx);
 	queue_push(task, pool.queue);
+	pool.pending++;
 	pthread_mutex_unlock(&pool.mtx);
 	pthread_cond_signal(&pool.condv);
 	return 0;
+}
+
+
+bool tasks_ready()
+{
+	pthread_mutex_lock(&pool.mtx);
+	bool ret = pool.pending == 0;
+	pthread_mutex_unlock(&pool.mtx);
+	return ret;
 }
 
 int finish_pool()

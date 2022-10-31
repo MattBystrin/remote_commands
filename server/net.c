@@ -16,8 +16,6 @@
 #include "thread_pool.h"
 #include "error.h"
 
-pthread_mutex_t peers_mtx; 
-
 static int epoll_fd = -1;
 static int sock_fd = -1;
 static bool multi_thread = false;
@@ -50,8 +48,6 @@ static void close_conn(struct peer *p)
 	if (p->pipe)
 		pclose(p->pipe);
 	close(p->sock_fd);
-	pthread_mutex_destroy(&p->pipe_mtx);
-	pthread_mutex_destroy(&p->sock_mtx);
 	p->sock_fd = -1;
 }
 
@@ -62,48 +58,33 @@ static handle_t accept_handle = {
 
 static void peer_accept(void *args)
 {
-	int ret = pthread_mutex_trylock(&peers_mtx);
-	if (ret == EBUSY)
-		return;
-	printf("Accept handle\n");
+	printf("Accept handle %ld\n", pthread_self());
 	struct peer *p = find_slot(); /* Find free slot for incoming peer */
 	if (!p) {
 		printf("No more peer availible\n");
 		int tmp = accept(sock_fd, NULL, NULL);
 		close(tmp);
-		goto ret;
+		return;
 	}
 	p->sock_fd = accept(sock_fd, NULL, NULL);
+	if (p->sock_fd < 0)
+		printf("Error accepting\n");
 	p->sock_recv.function = peer_receive;
 	p->sock_recv.args = p;
-	ret = pthread_mutex_init(&p->pipe_mtx, NULL);
-	ret = pthread_mutex_init(&p->sock_mtx, NULL);
-	if (ret) {
-		printf("Error init mutex\n");
-		close(p->sock_fd);
-		goto ret;
-	}
-
+	printf("Accept sockfd %d, %ld\n", p->sock_fd, pthread_self());
 	struct epoll_event peer_event = {
 		.events = EPOLLIN,
 		.data.ptr = &p->sock_recv
 	};
 	epoll_ctl(epoll_fd, EPOLL_CTL_ADD, p->sock_fd, &peer_event);
-
-ret:
-	pthread_mutex_unlock(&peers_mtx);
 }
 
 static void peer_receive(void *args)
 {
 	struct peer *p = (struct peer *)args;
-	int ret = pthread_mutex_trylock(&p->sock_mtx);
-	if (ret == EBUSY)
-		return;
 	uint32_t msg_len = 0;
 	int len = recv(p->sock_fd, (uint8_t *)&msg_len, sizeof(msg_len), 0);
 	if (len == 0) {
-		pthread_mutex_unlock(&p->sock_mtx);
 		close_conn(p);
 		return;
 	}
@@ -115,7 +96,6 @@ static void peer_receive(void *args)
 	if (buf[len - 1] != 0) {
 		printf("Corrupted packet\n");
 		free(buf);
-		pthread_mutex_unlock(&p->sock_mtx);
 		return;
 	}
 	printf("Received command: %s\n", buf);
@@ -131,26 +111,20 @@ static void peer_receive(void *args)
 		.data.ptr = &p->pipe_recv
 	};
 	epoll_ctl(epoll_fd, EPOLL_CTL_ADD, p->pipe->_fileno, &pipe_event);
-	pthread_mutex_unlock(&p->sock_mtx);
 }
 
 /* This task probably will be running in multithread */
 static void pipe_receive(void *args)
 {
 	struct peer *p = (struct peer *)args;
-	int ret = pthread_mutex_trylock(&p->pipe_mtx);
-	if (ret == EBUSY)
-		return;
 	printf("Pipe receive event\n");
 	char buf[100];
 	int len = read(p->pipe->_fileno, buf, 100);
 	if (len == 0) {
-		pthread_mutex_unlock(&p->pipe_mtx);
 		close_conn(p);
 		return;
 	}
-	len = write(p->sock_fd, buf, len);
-	pthread_mutex_unlock(&p->pipe_mtx);
+	len = send(p->sock_fd, buf, len, MSG_NOSIGNAL);
 	return;
 }
 
@@ -174,7 +148,6 @@ static int init_socket(const char *addr_str, uint16_t port)
 
 int net_init(const char *addr_str, uint16_t port, int thread_num)
 {
-	pthread_mutex_init(&peers_mtx, NULL);
 	for (int i = 0; i < MAX_PEERS; i++) {
 		peers[i].sock_fd = -1;
 		peers[i].pipe = NULL;
@@ -204,31 +177,36 @@ int net_init(const char *addr_str, uint16_t port, int thread_num)
 int net_event_loop()
 {
 	struct epoll_event triggered_events[10];
-	/* Can stuck here because elpoll_waits with no events */
-	int num = epoll_wait(epoll_fd, triggered_events, 10, 100);
+	int num = epoll_wait(epoll_fd, triggered_events, 10, -1);
 	if (num == -1) {
-		printf("epoll() error %s", strerror(errno));
+		printf("epoll() error %s\n", strerror(errno));
 		return -1;
 	}
+	printf("Events occured %d %ld\n", num, pthread_self());
 	for (int i = 0; i < num; i++) {
-		if (!triggered_events[i].data.ptr)
+		if (!triggered_events[i].data.ptr) {
+			printf("NULL args event\n");
 			continue;
+		}
 		handle_t handle = *(handle_t *)(triggered_events[i].data.ptr);
-		if (multi_thread)
+		if (multi_thread) {
+			printf("Pushing task %ld\n", pthread_self());
 			push_task(handle);
-		else
+		} else {
 			exec_task(handle);
+		}
 	}
+	/* This prevents reenter of one task for one socket or pipe */
+	if (multi_thread)
+		while(!tasks_ready()); /* Can be a condvar */
 	return 0;
 }
 
 int net_deinit()
 {
 	if (multi_thread)
-		finish_pool(); /* Blocks until all tasks complete */
-	pthread_mutex_destroy(&peers_mtx);
+		finish_pool();
 	int ret = close(epoll_fd);
-	//error(!ret, "close() on epoll");
 	/* Close clients' sockets */
 	for (int i = 0; i < MAX_PEERS; i++) {
 		if (peers[i].sock_fd)
