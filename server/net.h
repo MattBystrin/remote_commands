@@ -1,9 +1,23 @@
-#ifndef SERVER_NET_HPP
-#define SERVER_NET_HPP
+#ifndef SERVER_NET_H
+#define SERVER_NET_H
 
+#include <fcntl.h>
 #include <stdint.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <pthread.h>
+#include "thread_pool.h"
 
-int net_init(const char *addr, uint16_t port);
+struct peer {
+	int sock_fd;
+	FILE *pipe;
+	handle_t sock_recv;
+	handle_t pipe_recv;
+	pthread_mutex_t pipe_mtx; /**/
+	pthread_mutex_t sock_mtx; /**/
+};
+
+int net_init(const char *addr, uint16_t port, int thread_num);
 int net_event_loop();
 int net_deinit();
 

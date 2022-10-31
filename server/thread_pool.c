@@ -14,13 +14,15 @@ struct thread_pool {
 	pthread_cond_t condv;
 	/* Must be changed under mutex */
 	bool running;
+	struct node *queue;
 };
 
 static struct thread_pool pool = {
 	.threads = NULL,
 	.num = 0,
 	.mtx = 0,
-	.condv = 0
+	.condv = 0,
+	.queue = NULL
 };
 
 static int availtasks = 0;
@@ -38,31 +40,30 @@ task_t example_task = {
 	.args = &intarg,
 };
 
-#define exec_task(x) x.function(x.args)
-
 void *work_func(void *arg)
 {
 	while(1) {
 		pthread_mutex_lock(&pool.mtx);
-		while(pool.running == true && availtasks == 0)
+		/* */
+		while(pool.running == true && queue_empty(pool.queue))
 			pthread_cond_wait(&pool.condv, &pool.mtx);
 
-		if (pool.running == false && availtasks == 0) {
+		if (pool.running == false && queue_empty(pool.queue)) {
 			pthread_mutex_unlock(&pool.mtx);
 			return arg;
 		}
 		/* Critical section */
-		availtasks--;
+		task_t task = queue_pop(pool.queue);
 		pthread_mutex_unlock(&pool.mtx);
 		/* Non-critial section */
-		exec_task(example_task);
+		exec_task(task);
 	}
 }
 
 int push_task(task_t task)
 {
 	pthread_mutex_lock(&pool.mtx);
-	availtasks++;
+	queue_push(task, pool.queue);
 	pthread_mutex_unlock(&pool.mtx);
 	pthread_cond_signal(&pool.condv);
 	return 0;
@@ -76,11 +77,12 @@ int finish_pool()
 	pthread_cond_broadcast(&pool.condv);
 
 	for (int i = 0; i < pool.num; i++)
-		pthread_join(pool.threads[i], NULL);
-	if (pool.threads)
-		free(pool.threads);
+		pthread_detach(pool.threads[i]);
+	free(pool.threads);
+
 	pthread_cond_destroy(&pool.condv);
 	pthread_mutex_destroy(&pool.mtx);
+	queue_delete(pool.queue);
 	printf("Pool finished\n");
 	return 0;
 }
@@ -95,6 +97,7 @@ int allocate_pool(int num)
 	pool.num = num;
 	pool.running = true;
 	pool.threads = malloc(num * sizeof(pthread_t));
+	pool.queue = queue_init();
 	/* Allocate mutex */
 	int ret = pthread_mutex_init(&pool.mtx, NULL);
 	if (ret) {
