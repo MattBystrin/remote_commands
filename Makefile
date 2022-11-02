@@ -1,17 +1,15 @@
 BDIR = build
+ARGS = -g -pthread -std=c99 -I.
 
-.PHONY: all server client tests
+.PHONY: all server client dir
 
-all: server client tests
+all: dir server client
 
 server: server/server.c server/thread_pool.c server/net.c server/queue.c
-	gcc -g $^ -o $(BDIR)/server -std=c99 -pthread 
+	gcc $(ARGS) $^ -o $(BDIR)/server 
 
 client: client/client.c
-	gcc -g $^ -o $(BDIR)/client -std=c99
-
-tests: tests.c server/thread_pool.c server/queue.c
-	gcc -g $^ -o $(BDIR)/tests
+	gcc $(ARGS) $^ -o $(BDIR)/client 
 
 dir:
 	mkdir -p build

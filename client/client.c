@@ -18,7 +18,6 @@ struct args {
 	char *cmd;
 	struct in_addr addr;
 	uint16_t port;
-	unsigned int threads;
 };
 
 static const char doc[] = "Client for remote command execution";
@@ -80,7 +79,6 @@ int main(int argc, char *argv[])
 		.cmd = "whoami",
 		.addr = 0,
 		.port = 0,
-		.threads = 0
 	};
 	argp_parse(&argp, argc, argv, 0, 0, &args);
 	/* Socket creation*/

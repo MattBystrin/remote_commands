@@ -38,6 +38,14 @@ struct node *queue_init()
 	return head;
 };
 
+int queue_size(struct node *head)
+{
+	int i = 0;
+	for (struct node *next = head->next; next != head; next = next->next)
+		i++;
+	return i;
+}
+
 bool queue_empty(struct node *head)
 {
 	return head->next == head;

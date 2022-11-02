@@ -1,11 +1,12 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <stdbool.h>
 #include <unistd.h>
+#include <pthread.h>
 
-#include "thread_pool.h"
 #include "queue.h"
+#include "thread_pool.h"
+#include "messages.h"
 
 struct thread_pool {
 	pthread_t *threads;
@@ -14,7 +15,7 @@ struct thread_pool {
 	pthread_cond_t condv;
 	bool running; /* Must be changed under mutex */
 	struct node *queue;
-	int pending; /* Working tasks */
+	int pending; /* Also must be changed under mutex */
 };
 
 static struct thread_pool pool = {
@@ -25,21 +26,6 @@ static struct thread_pool pool = {
 	.queue = NULL,
 	.pending = 0
 };
-
-static int availtasks = 0;
-
-void inside_func(void *arg)
-{
-	int *casted = (int *)arg;
-	printf("Getted arg %d\n", *casted);
-}
-
-int tasks_amount(struct node *head)
-{
-	int i = 0;
-	for (struct node *next = head->next; next != head; next = next->next, i++);
-	return i;
-}
 
 void *work_func(void *arg)
 {
@@ -104,34 +90,27 @@ int finish_pool()
 
 int allocate_pool(int num)
 {
-	printf("Allocatin pool of %d threads\n", num);
-	if (pool.num != 0) {
-		printf("Warning: thread pool already allocated\n");
-		return -1;
-	}
+	printf("Allocating pool of %d threads\n", num);
+	assert(pool.num == 0);
 	pool.num = num;
 	pool.running = true;
 	pool.threads = malloc(num * sizeof(pthread_t));
+	if (!pool.threads)
+		err(0, "thread array allocation failed");
 	pool.queue = queue_init();
 	/* Allocate mutex */
 	int ret = pthread_mutex_init(&pool.mtx, NULL);
-	if (ret) {
-		printf("Error creating mutex\n");
-		return -1;
-	}
+	if (ret)
+		err(ret, "mutex init failed");
 	/* Allocate condvar */
 	ret = pthread_cond_init(&pool.condv, NULL);
-	if (ret) {
-		printf("Error creating condvar\n");
-		return -1;
-	}
+	if (ret)
+		err(ret, "condv init failed");
 	/* Create threads */
 	for (int i = 0; i < num; i++) {
 		ret = pthread_create(pool.threads + i, NULL, work_func, NULL);	
-		if (ret) {
-			printf("Error %d creating thread %d\n", ret, i);
-			return ret;
-		}
+		if (ret)
+			err(ret, "thread creation failed");
 	}
 	return 0;
 }
